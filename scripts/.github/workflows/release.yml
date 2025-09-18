@@ -1,0 +1,106 @@
+name: Release (Foundry VTT Module)
+
+on:
+  push:
+    tags:
+      - "v*"         # ex: v0.4.0
+
+permissions:
+  contents: write    # necessário para criar a Release e enviar assets
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Instala dependências só se existir package.json
+      - name: Install deps (if any)
+        if: hashFiles('package-lock.json') != '' || hashFiles('pnpm-lock.yaml') != '' || hashFiles('yarn.lock') != '' || hashFiles('package.json') != ''
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm i --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn --frozen-lockfile
+          elif [ -f package-lock.json ] || [ -f package.json ]; then
+            npm ci --ignore-scripts
+          fi
+
+      # Roda build se existir script
+      - name: Build (if script exists)
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.build' package.json > /dev/null; then
+            npm run build
+          else
+            echo "No build script. Skipping."
+          fi
+
+      # Garante que module.json existe
+      - name: Ensure module.json
+        run: |
+          test -f module.json || (echo "module.json not found at repo root"; exit 1)
+
+      # Atualiza module.json com versão (da tag), manifest e download
+      # - version: remove o 'v' da tag
+      # - manifest: URL estável para o module.json no branch main (ajuste se usar outro branch)
+      # - download: aponta para o asset da Release desta mesma tag
+      - name: Patch module.json (version/manifest/download)
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}               # ex: v0.4.0
+        run: |
+          VERSION="${TAG#v}"
+          MANIFEST_URL="https://raw.githubusercontent.com/${REPO}/main/module.json"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/module.zip"
+
+          echo "Setting version=${VERSION}"
+          echo "Setting manifest=${MANIFEST_URL}"
+          echo "Setting download=${DOWNLOAD_URL}"
+
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" \
+             --arg manifest "$MANIFEST_URL" \
+             --arg download "$DOWNLOAD_URL" \
+             '.version = $v | .manifest = $manifest | .download = $download' \
+             module.json > "$tmp" && mv "$tmp" module.json
+
+          cat module.json
+
+      # Prepara o ZIP (exclui itens que não devem ir para distribuição)
+      - name: Create module.zip
+        run: |
+          ZIP_LIST="."
+          EXCLUDES="-x .git/\* -x .github/\* -x node_modules/\* -x tests/\* -x coverage/\* -x .env -x .DS_Store"
+          zip -r module.zip $ZIP_LIST $EXCLUDES
+
+      - name: Compute checksums
+        run: |
+          sha256sum module.zip > module.zip.sha256
+          sha256sum module.json > module.json.sha256
+          cat module.zip.sha256
+          cat module.json.sha256
+
+      # Cria a Release e envia os assets
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          files: |
+            module.zip
+            module.zip.sha256
+            module.json
+            module.json.sha256
