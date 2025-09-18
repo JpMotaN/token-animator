@@ -1,0 +1,90 @@
+.token-animator-app .ta-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.token-animator-app .ta-right {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.token-animator-app .chk {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+.token-animator-app .anim-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.token-animator-app .anim-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--color-border, #666);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.2);
+}
+
+.token-animator-app .speed-wrap {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.token-animator-app .anim-item .btns {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.token-animator-app button.danger {
+  color: #e66;
+}
+
+.token-animator-app .token-animator-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.token-animator-app .ta-edit-banner {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px dashed var(--color-border, #666);
+  border-radius: 6px;
+  background: rgba(50,50,50,0.25);
+}
+/* opcional em styles/token-animator.css */
+#global-animator-panel .window-content {
+  overflow: hidden;    /* container */
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+#global-animator-panel .ga-inner {
+  min-height: 0;
+  overflow: auto;      /* rola verticalmente dentro da altura definida */
+  flex: 1 1 auto;
+}
+/* Botões de pasta: manter texto em uma linha e largura mínima */
+.global-animator .gap-section .ta-right button.nowrap {
+  white-space: nowrap;
+  min-width: 110px;
+}
+
+/* Espaçamento melhor entre botões */
+.global-animator .gap-section .ta-right button + button {
+  margin-left: 6px;
+}
