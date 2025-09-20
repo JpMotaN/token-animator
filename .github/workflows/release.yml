@@ -18,15 +18,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Node sem cache (evita erro por falta de lockfile)
+      # ⚠️ Sem cache aqui (evita exigir lockfile)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Instala dependências só se existir package.json/lockfile
+      # Instala dependências apenas se existirem; usa ci só quando houver lockfile
       - name: Install deps (if any)
-        if: hashFiles('package-lock.json') != '' || hashFiles('pnpm-lock.yaml') != '' || hashFiles('yarn.lock') != '' || hashFiles('package.json') != ''
         run: |
           if [ -f pnpm-lock.yaml ]; then
             corepack enable
@@ -34,8 +33,12 @@ jobs:
           elif [ -f yarn.lock ]; then
             corepack enable
             yarn --frozen-lockfile
-          elif [ -f package-lock.json ] || [ -f package.json ]; then
+          elif [ -f package-lock.json ]; then
             npm ci --ignore-scripts
+          elif [ -f package.json ]; then
+            npm install --ignore-scripts --no-audit --no-fund
+          else
+            echo "No dependencies to install."
           fi
 
       # Roda build se existir script
