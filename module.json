@@ -5,8 +5,10 @@
   "version": "0.1.0",
   "authors": [{ "name": "Jotape" }],
   "compatibility": { "minimum": "12", "verified": "13" },
+
   "esmodules": ["scripts/main.js"],
   "styles": ["styles/token-animator.css"],
+
   "url": "https://github.com/JpMotaN/token-animator",
   "bugs": "https://github.com/JpMotaN/token-animator/issues",
   "readme": "https://github.com/JpMotaN/token-animator#readme",
@@ -14,7 +16,3 @@
   "manifest": "https://raw.githubusercontent.com/JpMotaN/token-animator/main/module.json",
   "download": "https://github.com/JpMotaN/token-animator/releases/latest/download/token-animator.zip"
 }
-
-
-
-
