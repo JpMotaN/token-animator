@@ -5,12 +5,17 @@
   "version": "0.1.0",
   "authors": [{ "name": "Jotape" }],
   "compatibility": { "minimum": "12", "verified": "13" },
-  "esmodules": ["scripts/main.js"],
-  "styles": ["styles/token-animator.css"],
-  "url": "https://github.com/JpMotaN/token-animator",
+  "esmodules": [
+    "scripts/main.js"
+  ],
+  "styles": [
+    "styles/token-animator.css"
+  ],
+  "minimumCoreVersion": "12",
+  "url": "https://foundryvtt.com/packages/token-animator",
   "bugs": "https://github.com/JpMotaN/token-animator/issues",
   "readme": "https://github.com/JpMotaN/token-animator#readme",
   "license": "MIT",
   "manifest": "https://raw.githubusercontent.com/JpMotaN/token-animator/main/module.json",
-  "download": "https://github.com/JpMotaN/token-animator/releases/download/v0.1.0/token-animator.zip"
+  "download": "https://github.com/JpMotaN/token-animator/releases/download/v0.1.0/module.zip"
 }
