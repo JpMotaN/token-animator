@@ -1,12 +1,13 @@
-name: Release (Foundry VTT Module)
+name: Release (GitHub + Foundry)
 
 on:
   push:
     tags:
-      - "v*"         # ex: v0.4.0
+      - "v*.*.*"              # ex.: v0.1.2
+  workflow_dispatch: {}
 
 permissions:
-  contents: write    # necessário para criar a Release e enviar assets
+  contents: write             # criar release e enviar assets
 
 jobs:
   build-and-release:
@@ -18,90 +19,141 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ⚠️ Sem cache aqui (evita exigir lockfile)
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # Instala dependências apenas se existirem; usa ci só quando houver lockfile
-      - name: Install deps (if any)
+      - name: Ensure tools
         run: |
-          if [ -f pnpm-lock.yaml ]; then
-            corepack enable
-            pnpm i --frozen-lockfile
-          elif [ -f yarn.lock ]; then
-            corepack enable
-            yarn --frozen-lockfile
-          elif [ -f package-lock.json ]; then
-            npm ci --ignore-scripts
-          elif [ -f package.json ]; then
-            npm install --ignore-scripts --no-audit --no-fund
-          else
-            echo "No dependencies to install."
+          sudo apt-get update
+          sudo apt-get install -y jq zip curl
+
+      - name: Resolve tag/version
+        id: meta
+        run: |
+          RAW_TAG="${GITHUB_REF#refs/tags/}"   # v0.1.2
+          if [ -z "$RAW_TAG" ]; then
+            RAW_TAG="$(git describe --tags --abbrev=0)"
           fi
-
-      # Roda build se existir script
-      - name: Build (if script exists)
-        run: |
-          if [ -f package.json ] && jq -e '.scripts.build' package.json > /dev/null; then
-            npm run build
-          else
-            echo "No build script. Skipping."
+          if [[ ! "$RAW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag: '$RAW_TAG' (expected vX.Y.Z)" >&2
+            exit 2
           fi
+          VERSION="${RAW_TAG#v}"               # 0.1.2
+          echo "tag=$RAW_TAG"       >> $GITHUB_OUTPUT
+          echo "version=$VERSION"   >> $GITHUB_OUTPUT
+          echo "Using TAG=$RAW_TAG / VERSION=$VERSION"
 
-      # Garante que module.json existe
-      - name: Ensure module.json
+      - name: Validate base module.json
         run: |
-          test -f module.json || (echo "module.json not found at repo root"; exit 1)
+          test -f module.json || (echo "module.json not found at repo root" && exit 1)
+          jq -e '.id and .title and .compatibility.minimum and .compatibility.verified' module.json >/dev/null \
+            || (echo "Missing required fields in module.json (id/title/compatibility)" && exit 1)
 
-      # Atualiza module.json com versão (da tag), manifest e download
+      # Atualiza module.json para apontar aos assets da RELEASE desta tag
       - name: Patch module.json (version/manifest/download)
-        env:
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}               # ex: v0.4.0
         run: |
-          VERSION="${TAG#v}"
-          MANIFEST_URL="https://raw.githubusercontent.com/${REPO}/main/module.json"
-          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/token-animator.zip"
+          REPO="${{ github.repository }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
 
-          echo "Setting version=${VERSION}"
-          echo "Setting manifest=${MANIFEST_URL}"
-          echo "Setting download=${DOWNLOAD_URL}"
+          MANIFEST_URL="https://github.com/${REPO}/releases/download/${TAG}/module.json"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/token-animator.zip"
 
           tmp=$(mktemp)
           jq --arg v "$VERSION" \
              --arg manifest "$MANIFEST_URL" \
              --arg download "$DOWNLOAD_URL" \
-             '.version = $v | .manifest = $manifest | .download = $download' \
+             '.version=$v | .manifest=$manifest | .download=$download' \
              module.json > "$tmp" && mv "$tmp" module.json
 
+          echo "module.json after patch:"
           cat module.json
 
-      # Cria o ZIP de distribuição (ignora arquivos de dev)
-      - name: Create token-animator.zip
+      - name: Build zip
         run: |
-          ZIP_LIST="."
-          EXCLUDES="-x .git/\* -x .github/\* -x node_modules/\* -x tests/\* -x coverage/\* -x .env -x .DS_Store"
-          zip -r token-animator.zip $ZIP_LIST $EXCLUDES
+          mkdir -p dist
+          zip -r "dist/token-animator-${{ steps.meta.outputs.version }}.zip" \
+            module.json \
+            scripts \
+            styles \
+            --exclude '*.git*' \
+            --exclude 'dist/*' \
+            --exclude '.github/*'
+          cp "dist/token-animator-${{ steps.meta.outputs.version }}.zip" token-animator.zip
 
-      - name: Compute checksums
+      - name: Checksums
         run: |
           sha256sum token-animator.zip > token-animator.zip.sha256
           sha256sum module.json > module.json.sha256
           cat token-animator.zip.sha256
           cat module.json.sha256
 
-      # Cria a Release e envia os assets
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          prerelease: ${{ contains(steps.meta.outputs.tag, 'beta') || contains(steps.meta.outputs.tag, 'alpha') }}
           files: |
             token-animator.zip
             token-animator.zip.sha256
             module.json
             module.json.sha256
+
+      # Espera até que o asset "module.json" do release esteja disponível (evita 404 na API do Foundry)
+      - name: Wait for manifest asset availability
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          URL="https://github.com/${REPO}/releases/download/${TAG}/module.json"
+          echo "Waiting for $URL"
+          for i in {1..20}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -L "$URL")
+            echo "Try $i -> HTTP $CODE"
+            [ "$CODE" = "200" ] && exit 0
+            sleep 3
+          done
+          echo "Manifest asset not reachable in time"
+          exit 1
+
+      # (Opcional) Dry-run na API do Foundry — bom para depurar
+      - name: Foundry API (dry-run)
+        env:
+          FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
+        run: |
+          PKG_ID=$(jq -r '.id' module.json)
+          VERSION=$(jq -r '.version' module.json)
+          MANIFEST=$(jq -r '.manifest' module.json)
+          NOTES="https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.tag }}"
+
+          payload=$(jq -n --arg id "$PKG_ID" --arg v "$VERSION" --arg manifest "$MANIFEST" --arg notes "$NOTES" \
+            '{id:$id, "dry-run": true, release:{version:$v, manifest:$manifest, notes:$notes}}')
+
+          echo "$payload" > dryrun_body.json
+
+          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${FOUNDRY_RELEASE_TOKEN}" \
+            -d @dryrun_body.json | tee dryrun_response.json
+
+          jq -e '.status == "success"' dryrun_response.json > /dev/null
+
+      # Publica de fato no Foundry
+      - name: Publish to Foundry
+        env:
+          FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
+        run: |
+          PKG_ID=$(jq -r '.id' module.json)
+          VERSION=$(jq -r '.version' module.json)
+          MANIFEST=$(jq -r '.manifest' module.json)
+          NOTES="https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.tag }}"
+
+          payload=$(jq -n --arg id "$PKG_ID" --arg v "$VERSION" --arg manifest "$MANIFEST" --arg notes "$NOTES" \
+            '{id:$id, release:{version:$v, manifest:$manifest, notes:$notes}}')
+
+          echo "$payload" > publish_body.json
+
+          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${FOUNDRY_RELEASE_TOKEN}" \
+            -d @publish_body.json | tee publish_response.json
+
+          jq -e '.status == "success"' publish_response.json > /dev/null
