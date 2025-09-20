@@ -6,7 +6,7 @@ on:
       - "v*"         # ex: v0.4.0
 
 permissions:
-  contents: write
+  contents: write    # necessário para criar a Release e enviar assets
 
 jobs:
   build-and-release:
@@ -18,99 +18,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Detecta lockfile/package.json para decidir cache/instalação
-      - name: Detect package manager files
-        id: detect
-        run: |
-          HAS_PKG_JSON=false
-          HAS_NPM_LOCK=false
-          HAS_YARN_LOCK=false
-          HAS_PNPM_LOCK=false
-
-          [ -f package.json ] && HAS_PKG_JSON=true
-          [ -f package-lock.json ] && HAS_NPM_LOCK=true
-          [ -f npm-shrinkwrap.json ] && HAS_NPM_LOCK=true
-          [ -f yarn.lock ] && HAS_YARN_LOCK=true
-          [ -f pnpm-lock.yaml ] && HAS_PNPM_LOCK=true
-
-          echo "has_pkg_json=$HAS_PKG_JSON" >> $GITHUB_OUTPUT
-          echo "has_npm_lock=$HAS_NPM_LOCK" >> $GITHUB_OUTPUT
-          echo "has_yarn_lock=$HAS_YARN_LOCK" >> $GITHUB_OUTPUT
-          echo "has_pnpm_lock=$HAS_PNPM_LOCK" >> $GITHUB_OUTPUT
-
-      # Setup Node sem cache (caso não exista lockfile)
-      - name: Setup Node (no cache)
-        if: steps.detect.outputs.has_npm_lock == 'false' && steps.detect.outputs.has_yarn_lock == 'false' && steps.detect.outputs.has_pnpm_lock == 'false'
+      # Node sem cache (evita erro por falta de lockfile)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Setup Node com cache npm
-      - name: Setup Node (cache npm)
-        if: steps.detect.outputs.has_npm_lock == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      # Setup Node com cache yarn
-      - name: Setup Node (cache yarn)
-        if: steps.detect.outputs.has_yarn_lock == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: yarn
-
-      # Setup Node com cache pnpm
-      - name: Setup Node (cache pnpm)
-        if: steps.detect.outputs.has_pnpm_lock == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      # Instala dependências somente se houver package.json
+      # Instala dependências só se existir package.json/lockfile
       - name: Install deps (if any)
-        if: steps.detect.outputs.has_pkg_json == 'true'
+        if: hashFiles('package-lock.json') != '' || hashFiles('pnpm-lock.yaml') != '' || hashFiles('yarn.lock') != '' || hashFiles('package.json') != ''
         run: |
           if [ -f pnpm-lock.yaml ]; then
             corepack enable
             pnpm i --frozen-lockfile
           elif [ -f yarn.lock ]; then
+            corepack enable
             yarn --frozen-lockfile
-          elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+          elif [ -f package-lock.json ] || [ -f package.json ]; then
             npm ci --ignore-scripts
-          else
-            # Sem lockfile, usa npm install "normal" (não recomendado para libs, mas ok p/ módulo simples)
-            npm install --ignore-scripts
           fi
 
-      # Build opcional
+      # Roda build se existir script
       - name: Build (if script exists)
-        if: steps.detect.outputs.has_pkg_json == 'true'
         run: |
-          if jq -e '.scripts.build' package.json > /dev/null; then
+          if [ -f package.json ] && jq -e '.scripts.build' package.json > /dev/null; then
             npm run build
           else
             echo "No build script. Skipping."
           fi
 
-      # Garante module.json
+      # Garante que module.json existe
       - name: Ensure module.json
         run: |
           test -f module.json || (echo "module.json not found at repo root"; exit 1)
 
-      # Patch module.json: versão = tag sem 'v'
-      # manifest = raw da tag (recomendado para Foundry)
-      # download = asset da Release
+      # Atualiza module.json com versão (da tag), manifest e download
       - name: Patch module.json (version/manifest/download)
         env:
           REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}               # ex: v0.4.0
         run: |
           VERSION="${TAG#v}"
-          MANIFEST_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/module.json"
-          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/module.zip"
+          MANIFEST_URL="https://raw.githubusercontent.com/${REPO}/main/module.json"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/token-animator.zip"
 
           echo "Setting version=${VERSION}"
           echo "Setting manifest=${MANIFEST_URL}"
@@ -125,20 +75,21 @@ jobs:
 
           cat module.json
 
-      # Cria o ZIP excluindo itens irrelevantes
-      - name: Create module.zip
+      # Cria o ZIP de distribuição (ignora arquivos de dev)
+      - name: Create token-animator.zip
         run: |
           ZIP_LIST="."
           EXCLUDES="-x .git/\* -x .github/\* -x node_modules/\* -x tests/\* -x coverage/\* -x .env -x .DS_Store"
-          zip -r module.zip $ZIP_LIST $EXCLUDES
+          zip -r token-animator.zip $ZIP_LIST $EXCLUDES
 
       - name: Compute checksums
         run: |
-          sha256sum module.zip > module.zip.sha256
+          sha256sum token-animator.zip > token-animator.zip.sha256
           sha256sum module.json > module.json.sha256
-          cat module.zip.sha256
+          cat token-animator.zip.sha256
           cat module.json.sha256
 
+      # Cria a Release e envia os assets
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -147,7 +98,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
           files: |
-            module.zip
-            module.zip.sha256
+            token-animator.zip
+            token-animator.zip.sha256
             module.json
             module.json.sha256
